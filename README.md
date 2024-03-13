@@ -275,7 +275,7 @@ CREATE TABLE weekly_user_metrics (
 
 
 ```sql
-INSERT INTO public.weekly_user_metrics(year, week, order_ratio, skip_ratio, pause_ratio, unsubscription_ratio)
+INSERT INTO weekly_user_metrics(year, week, order_ratio, skip_ratio, pause_ratio, unsubscription_ratio)
 WITH subscriptions AS (
     SELECT
         dt.year,
