@@ -4,14 +4,14 @@ This exercise will provide an hypothetical overview of business models at CookUn
 
 ## Map the relationship of our order and invoice tables above. Also note any potential issues in being able to join these tables reliably. 
 
-Orders and invoices are two tables related by the invoice_id. As we have the invoice_id foreign key in the order_creations table, this implies that one order creation is related to one invoice. On the other hand, we're going to assume a one-to-many relationship between invoices and order creations, meaning that one invoice could be associated with multiple order creations.
+Orders and invoices are two tables related by the invoice_id. As I have the invoice_id foreign key in the order_creations table, this implies that one order creation is related to one invoice. On the other hand, I'm going to assume a one-to-many relationship between invoices and order creations, meaning that one invoice could be associated with multiple order creations.
 
 In terms of potential issues, these are the most important points:
 
-- Data Consistency: the invoice_id could be null if the order is not yet confirmed, this will cause referential integrity violation. Maybe we could add a status to the order for clarity or introduce a special default row in the dimension table for the “Pending” record.
-- Amount related to an order: if we want to calculate the amount associated to only an order, we'll have to do a partition of the amount of the invoice. As we don't know the amount at order level. This is only informed at invoice level. So if we' re summing the amount for example and we add order_creations to the join, this would shield incorrect results.
+- Data Consistency: the invoice_id could be null if the order is not yet confirmed, this will cause referential integrity violation. Maybe a status could be added a status to the order for clarity or introduce a special default row in the dimension table for the “Pending” record.
+- Amount related to an order: To calculate the amount associated to only an order, a partition of the amount of the invoice has to be calculated. As the amount at order leve is not known. This is only informed at invoice level. So, for example, if summing the amount and order_creations is added to the join, this would shield incorrect results.
 - Handling invoices: in the process of confirming the order, a new record has to be added to the invoices table, and the relationship with their respective orders has to be generated with the invoice ID.
-- Invoice status: it could be worth it to add the status of the invoice (confirmed, pending, etc.). That way we could reflect revenue that it's already charged.
+- Invoice status: it could be worth it to add the status of the invoice (confirmed, pending, etc.). That way revenue could that it's already charged be reflected.
 
 This is the entity relationship model I think represents the current structure:
 
@@ -19,20 +19,20 @@ This is the entity relationship model I think represents the current structure:
 
 ## Produce a conceptual and logical model diagram that identifies and labels the entities, classifies each entity as either **objects** (dimensions) or **events** (facts) and establishes how they **relate** to each other (e.g. “has many”, “has one”, “belongs to”)
 
-In terms of modeling we can think of the following entities:
+In terms of modeling I can think of the following entities:
 
 - User: Represents the individual customers. This would be a dimension table.
 - Subscription: Represents the subscription plans chosen by users. This would be a dimension table.
 - Order: Represents the action of placing an order. This would be a fact table and our grain.
 - Invoice: Represent the document that records the transaction. This would be a fact table.
 - Action: Represents various user actions a user can make. This would be a fact table.
-- Action type: Represents the type of actions (order cancellation, skipping orders, pausing account) available. This would be a dimension table.
+- Action type: Represents the type of actions (skipping orders, pausing account) available. This would be a dimension table.
 
-In this model, an user can have one subscription, perform multiple actions, generate multiple orders and have multiple invoices associated to him. A subscriptions is associated to one user, multiple orders can be put through it, and multiple actions can be done to it. An invoice can be associated to multiple orders, but one user. An order is placed by one user, is associated with one subscription and it's documented in one invoice. Also, an action is related to one user, associated to one subscription and it has one action type. Finally, an action type is related to multiple actions. This would be the main idea:
+In this model, an user can have one subscription, perform multiple actions, generate multiple orders and have multiple invoices associated to him. A subscription is associated to one user, multiple orders can be put through it, and multiple actions can be done to it. An invoice can be associated to multiple orders, but one user. An order is placed by one user, is associated with one subscription and it's documented in one invoice. Also, an action is related to one user, associated to one subscription and it has one action type. Finally, an action type is related to multiple actions. This would be the main idea:
 
 ![DER diagram](image-2.png)
 
-I think this model allow us to have flexibility and adaptability, as we can add more information about orders adding lookup attributes to the existing fact table and new dimension tables. In regards to the dimensional tables, action types would be SCD of Type 1, as I think we don't need a history of changes, but for users and subscriptions we're going to with Type 2, as it would be useful to track changes and allow a historic analysis.
+I think this model allow us to have flexibility and adaptability, as more information about orders can be added adding lookup attributes to the existing fact table and new dimension tables. In regards to the dimensional tables, action types would be SCD of Type 1, as I think a history of changes is not needed, but for users and subscriptions I'm going to go with Type 2, as it would be useful to track changes and allow a historic analysis.
 
 
 ## 3. Using SQL, design and create new table/s (dimensions and facts) that analysts could use to easily analyze: - each week, - what percentage of our users: placed an order, skipped, paused or cancelled (churned)
@@ -245,12 +245,10 @@ LEFT JOIN
     dim_subscription s ON skips."USERID" = s.user_id AND TO_TIMESTAMP(skips."CREATEDAT", 'YYYY-MM-DD HH24:MI:SS') BETWEEN s.validity_start AND s.validity_end
 GROUP BY 
     2, 3, 4, 5, 6;
-
-
 ```
 
 
 In terms of assumptions:
-- The order cancellations table has multiple records for one order, but the cancelation is a final state, so no order can be cancelled two times. We take this as a data error.
+- The order cancellations table has multiple records for one order, but the cancelation is a final state, so no order can be cancelled two times. I take this as a data error.
 - The skips table have two dates "CREATEDAT" and "DATE" that I assume refer to when the skip was made and the date that will be skipped. In case of pauses, it represents the dates related to that pause, and in case of a skip, the week that it's going to be skipped.
-- The skips table has values created with difference in seconds, we're going to use the date in order to identify the duration of the pause.
+- The skips table has values created with difference in seconds, I'm going to use the date without time in order to identify the duration of the pause.
