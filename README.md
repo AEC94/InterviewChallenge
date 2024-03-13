@@ -93,8 +93,9 @@ CREATE TABLE dim_user (
 );
 
 CREATE TABLE dim_subscription (
-    creation_date TIMESTAMP,
     id INTEGER PRIMARY KEY,
+    creation_date DATE,
+    creation_datetime TIMESTAMP,
     user_id INTEGER,
     active BOOLEAN,
     validity_start TIMESTAMP,
@@ -132,9 +133,9 @@ SELECT
     'Q' || to_char(date, 'Q') AS quarter_name,
     EXTRACT(YEAR FROM date) AS year
 FROM
-    generate_series('2022-01-01'::DATE, '2022-12-31'::DATE, '1 day'::INTERVAL) AS date;
+    generate_series('2020-01-01'::DATE, '2022-12-31'::DATE, '1 day'::INTERVAL) AS date;
 
-INSERT INTO dim_subscription (creation_date, id, user_id, active, validity_start, validity_end)
+INSERT INTO dim_subscription (id,creation_date,creation_datetime, user_id, active, validity_start, validity_end)
 WITH intervals AS (
     SELECT
         "USERID",
@@ -147,8 +148,9 @@ WITH intervals AS (
         subscription_events
 )
 SELECT
-    TO_TIMESTAMP(MIN("CREATEDAT") OVER (PARTITION BY "USERID"), 'YYYY-MM-DD HH24:MI:SS'),
     ROW_NUMBER() OVER(),
+	DATE(MIN("CREATEDAT") OVER (PARTITION BY "USERID")),
+	TO_TIMESTAMP(MIN("CREATEDAT") OVER (PARTITION BY "USERID"), 'YYYY-MM-DD HH24:MI:SS'),
     "USERID",
     CASE
         WHEN (prev_event IS NULL AND "EVENT" = 'subscribe') OR
@@ -158,6 +160,9 @@ SELECT
     DATE(validity_start),
     DATE(COALESCE(validity_end, '9999-12-31'))
 FROM intervals;
+
+INSERT INTO dim_action_type(action_type_id, description)
+	VALUES (1, 'pause'),(2,'skip');
 
 INSERT INTO dim_user (register_id, user_id, creation_date, active, city, validity_start, validity_end)
 WITH intervals AS (
@@ -252,3 +257,101 @@ In terms of assumptions:
 - The order cancellations table has multiple records for one order, but the cancelation is a final state, so no order can be cancelled two times. I take this as a data error.
 - The skips table have two dates "CREATEDAT" and "DATE" that I assume refer to when the skip was made and the date that will be skipped. In case of pauses, it represents the dates related to that pause, and in case of a skip, the week that it's going to be skipped.
 - The skips table has values created with difference in seconds, I'm going to use the date without time in order to identify the duration of the pause.
+
+
+We can create a new gold layer table for the analysts with all the information already grouped:
+
+
+```sql
+CREATE TABLE weekly_user_metrics (
+    year INTEGER,
+    week VARCHAR(2),
+    order_ratio DECIMAL,
+    skip_ratio DECIMAL,
+    pause_ratio DECIMAL,
+    unsubscription_ratio DECIMAL
+);
+```
+
+
+```sql
+INSERT INTO public.weekly_user_metrics(year, week, order_ratio, skip_ratio, pause_ratio, unsubscription_ratio)
+WITH subscriptions AS (
+    SELECT
+        dt.year,
+        dt.week_name,
+        COUNT(DISTINCT user_id) AS unsubscriptions
+    FROM
+        dim_subscription ds
+    LEFT JOIN
+        dim_time dt ON ds.validity_start = dt.date
+    WHERE
+        NOT active
+    GROUP BY
+        dt.year,
+        dt.week_name
+),
+skips AS (
+    SELECT
+        dt.year,
+        dt.week_name,
+        COUNT(DISTINCT CASE WHEN dat.description = 'skip' THEN user_id END) AS skips,
+        COUNT(DISTINCT CASE WHEN dat.description = 'pause' THEN user_id END) AS pauses
+    FROM
+        fact_user_actions fua
+    LEFT JOIN
+        dim_time dt ON fua.creation_date = dt.date
+    LEFT JOIN
+        dim_action_type dat ON fua.action_type_id = dat.action_type_id
+    WHERE
+        NOT reversed
+    GROUP BY
+        dt.year,
+        dt.week_name
+),
+orders AS (
+    SELECT
+        dt.year,
+        dt.week_name,
+        COUNT(DISTINCT user_id) AS orders
+    FROM
+        fact_orders fo
+    LEFT JOIN
+        dim_time dt ON fo.creation_date = dt.date
+    WHERE
+        status <> 'Cancelled'
+    GROUP BY
+        dt.year,
+        dt.week_name
+),
+users AS (
+    SELECT
+        dt.year,
+        dt.week_name,
+        COUNT(DISTINCT user_id)::decimal AS active_users
+    FROM
+        dim_user du
+    LEFT JOIN
+        dim_time dt ON dt.date BETWEEN du.validity_start AND du.validity_end
+    WHERE
+        active AND dt.date < '2022-03-04'-- CURRENT_DATE()
+    GROUP BY
+        dt.year,
+        dt.week_name
+)
+SELECT
+    year,
+    week_name,
+    ROUND((COALESCE(orders, 0) * 100 / active_users), 2) AS order_ratio,
+    ROUND((COALESCE(skips, 0) * 100 / active_users), 2) AS skip_ratio,
+    ROUND((COALESCE(pauses, 0) * 100 / active_users), 2) AS pause_ratio,
+    ROUND((COALESCE(unsubscriptions, 0) * 100 / active_users), 2) AS unsubscription_ratio
+FROM
+    users
+LEFT JOIN
+    subscriptions USING (year, week_name)
+LEFT JOIN
+    skips USING (year, week_name)
+LEFT JOIN
+    orders USING (year, week_name);
+```
